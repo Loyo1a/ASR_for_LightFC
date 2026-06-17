@@ -2,6 +2,7 @@ import torch
 
 from lib.models import LightFC
 from lib.utils.box_ops import clip_box, box_xywh_to_xyxy, box_iou, box_xyxy_to_xywh
+from lib.utils.adaptive_search import action_index_to_factor, build_state, compute_apce, compute_motion
 from lib.test.utils.hann import hann2d
 from lib.test.tracker.basetracker import BaseTracker
 from lib.test.tracker.data_utils import Preprocessor
@@ -34,6 +35,9 @@ class lightFC(BaseTracker):
         self.network.eval()
         self.preprocessor = Preprocessor()
         self.state = None
+        self.prev_pred_box = None
+        self.current_search_factor = getattr(self.params, "init_search_factor",
+                                             getattr(self.params, "search_factor", 4.0))
 
         self.feat_sz = self.cfg.TEST.SEARCH_SIZE // self.cfg.MODEL.BACKBONE.STRIDE
 
@@ -54,12 +58,17 @@ class lightFC(BaseTracker):
             self.z_feat = self.network.forward_backbone(template.tensors)
 
         self.state = info['init_bbox']
+        self.prev_pred_box = None
+        self.current_search_factor = getattr(self.params, "init_search_factor",
+                                             getattr(self.params, "search_factor", 4.0))
         self.frame_id = 0
 
     def track(self, image, info: dict = None):
         H, W, _ = image.shape
         self.frame_id += 1
-        x_patch_arr, resize_factor, x_amask_arr = sample_target(image, self.state, self.params.search_factor,
+        factor_used = self.current_search_factor
+        prev_state = list(self.state)
+        x_patch_arr, resize_factor, x_amask_arr = sample_target(image, self.state, factor_used,
                                                                 output_sz=self.params.search_size)  # (x1, y1, w, h)
 
         search = self.preprocessor.process(x_patch_arr, x_amask_arr)
@@ -68,7 +77,8 @@ class lightFC(BaseTracker):
             x_dict = search
             out_dict = self.network.forward_tracking(z_feat=self.z_feat, x=x_dict.tensors)
 
-        response_origin = self.output_window * out_dict['score_map']
+        raw_score_map = out_dict['score_map']
+        response_origin = self.output_window * raw_score_map
 
         # ==================== 画 response map-3D 将2D图像逆时针转了45°====================
         # resp_np = response_origin.squeeze().detach().cpu().numpy()
@@ -144,8 +154,22 @@ class lightFC(BaseTracker):
                                            resize_factor).tolist()  # .unsqueeze(dim=0)  # tolist()
 
         self.state = clip_box(self.map_box_back(pred_box_origin, resize_factor), H, W, margin=2)
+        self._update_next_search_factor(raw_score_map, prev_state, self.state, factor_used)
 
         return {"target_bbox": self.state}
+
+    def _update_next_search_factor(self, raw_score_map, prev_box_xywh, curr_box_xywh, factor_used):
+        if not hasattr(self.network, "policy_model"):
+            return
+        prev_xyxy = box_xywh_to_xyxy(torch.tensor(prev_box_xywh, dtype=torch.float32, device=raw_score_map.device).view(1, 4))
+        curr_xyxy = box_xywh_to_xyxy(torch.tensor(curr_box_xywh, dtype=torch.float32, device=raw_score_map.device).view(1, 4))
+        factor_tensor = torch.tensor([factor_used], dtype=torch.float32, device=raw_score_map.device)
+        apce = compute_apce(raw_score_map)
+        motion = compute_motion(prev_xyxy, curr_xyxy)
+        state = build_state(apce, motion, factor_tensor)
+        with torch.no_grad():
+            next_action = self.network.policy_model(state).argmax(dim=-1)
+        self.current_search_factor = action_index_to_factor(next_action).item()
 
     def compute_box(self, response, out_dict, resize_factor):
         pred_boxes = self.network.head.cal_bbox(response, out_dict['size_map'], out_dict['offset_map'])

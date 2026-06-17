@@ -3,6 +3,7 @@ from lib.models.lightfc import MobileNetV2, tiny_vit_5m_224 #, pwcorr_se_scf_sc_
 from lib.utils.load import load_pretrain
 from lib.models.lightfc.head.OSTrackhead import CenterPredictor
 from lib.models.lightfc.fusion.fem import LFEM
+from lib.models.lightfc.search_policy import AdaptiveSearchActorCritic
 
 class LightFC(nn.Module):
     def __init__(self, cfg, env_num=0, training=False, ):
@@ -13,7 +14,7 @@ class LightFC(nn.Module):
         elif cfg.MODEL.BACKBONE.TYPE == 'tiny_vit_5m_224':
             self.backbone = tiny_vit_5m_224()
         self.training = training
-        if self.train:
+        if training:
             load_pretrain(self.backbone, env_num=env_num, training=training, cfg=cfg, mode=cfg.MODEL.BACKBONE.LOAD_MODE)
 
         self.fusion = LFEM(num_kernel=cfg.MODEL.FUSION.PARAMS.num_kernel,
@@ -26,6 +27,11 @@ class LightFC(nn.Module):
                                             stride=cfg.MODEL.HEAD.PARAMS.stride,
                                             freeze_bn=cfg.MODEL.HEAD.PARAMS.freeze_bn,
                                             )
+        if getattr(cfg.MODEL, "ASR_ENABLE", False):
+            hidden_dim = getattr(cfg.MODEL, "ASR_HIDDEN_DIM", 32)
+            self.asr_actor_critic = AdaptiveSearchActorCritic(state_dim=3, hidden_dim=hidden_dim, num_actions=4)
+            self.policy_model = self.asr_actor_critic.policy_model
+            self.value_model = self.asr_actor_critic.value_model
 
     def forward(self, z, x):
         if self.training:

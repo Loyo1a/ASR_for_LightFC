@@ -9,6 +9,7 @@ from lib.train.dataset import Lasot_lmdb, Got10k_lmdb, MSCOCOSeq_lmdb, ImagenetV
 from lib.train.optimizer.anan import Adan
 from lib.train.optimizer.lion import Lion
 from lib.utils.misc import is_main_process
+from lib.train.data.adaptive_search_processing import AdaptiveSearchCandidateProcessing, MultiFactorWarmupProcessing
 
 from lib.train.data import sequence_sampler
 
@@ -119,14 +120,37 @@ def build_dataloaders(cfg, settings):
     output_sz = settings.output_sz
     search_area_factor = settings.search_area_factor
 
-    data_processing_train = processing.STARKProcessing(search_area_factor=search_area_factor,
-                                                       output_sz=output_sz,
-                                                       center_jitter_factor=settings.center_jitter_factor,
-                                                       scale_jitter_factor=settings.scale_jitter_factor,
-                                                       mode='sequence',
-                                                       transform=transform_train,
-                                                       joint_transform=transform_joint,
-                                                       settings=settings)
+    train_type = getattr(cfg.TRAIN, "TYPE", "normal")
+    search_factors = getattr(cfg.DATA.SEARCH, "FACTORS", None)
+    if train_type == "rl_only":
+        data_processing_train = AdaptiveSearchCandidateProcessing(search_area_factor=search_area_factor,
+                                                                  output_sz=output_sz,
+                                                                  center_jitter_factor=settings.center_jitter_factor,
+                                                                  scale_jitter_factor=settings.scale_jitter_factor,
+                                                                  factors=search_factors if search_factors is not None else (2.0, 4.0, 6.0, 8.0),
+                                                                  mode='sequence',
+                                                                  transform=transform_train,
+                                                                  joint_transform=transform_joint,
+                                                                  settings=settings)
+    elif getattr(cfg.DATA.SEARCH, "RANDOM_FACTOR_PER_FRAME", False):
+        data_processing_train = MultiFactorWarmupProcessing(search_area_factor=search_area_factor,
+                                                            output_sz=output_sz,
+                                                            center_jitter_factor=settings.center_jitter_factor,
+                                                            scale_jitter_factor=settings.scale_jitter_factor,
+                                                            factors=search_factors if search_factors is not None else (2.0, 4.0, 6.0, 8.0),
+                                                            mode='sequence',
+                                                            transform=transform_train,
+                                                            joint_transform=transform_joint,
+                                                            settings=settings)
+    else:
+        data_processing_train = processing.STARKProcessing(search_area_factor=search_area_factor,
+                                                           output_sz=output_sz,
+                                                           center_jitter_factor=settings.center_jitter_factor,
+                                                           scale_jitter_factor=settings.scale_jitter_factor,
+                                                           mode='sequence',
+                                                           transform=transform_train,
+                                                           joint_transform=transform_joint,
+                                                           settings=settings)
 
     data_processing_val = processing.STARKProcessing(search_area_factor=search_area_factor,
                                                      output_sz=output_sz,
@@ -159,7 +183,7 @@ def build_dataloaders(cfg, settings):
     print("sampler_type", sampler_type)
     print("sampler_mode", sampler_mode)
 
-    if sampler_type == "sequence":
+    if sampler_type in ("sequence", "strict_consecutive"):
         dataset_train = sequence_sampler.SequenceSampler(
             datasets=names2datasets(cfg.DATA.TRAIN.DATASETS_NAME, settings, opencv_loader),
             p_datasets=cfg.DATA.TRAIN.DATASETS_RATIO,
@@ -168,7 +192,7 @@ def build_dataloaders(cfg, settings):
             num_search_frames=cfg.DATA.SEARCH.NUMBER,
             num_template_frames=cfg.DATA.TEMPLATE.NUMBER,
             processing=data_processing_train,
-            frame_sample_mode=cfg.DATA.SEQUENCE.MODE,
+            frame_sample_mode="strict_consecutive" if sampler_type == "strict_consecutive" else cfg.DATA.SEQUENCE.MODE,
             max_interval=cfg.DATA.SEQUENCE.MAX_INTERVAL
         )
     else:
@@ -207,7 +231,27 @@ def build_dataloaders(cfg, settings):
 
 def get_optimizer_scheduler(net, cfg):
     train_cls = getattr(cfg.TRAIN, "TRAIN_CLS", False)
-    if train_cls:
+    if getattr(cfg.TRAIN, "TYPE", "normal") == "rl_only":
+        param_dicts = []
+        trainable_params = []
+        for n, p in net.named_parameters():
+            is_policy_param = (
+                "policy_model" in n
+                or "value_model" in n
+                or "asr_actor_critic" in n
+            )
+            p.requires_grad = is_policy_param
+            if is_policy_param:
+                trainable_params.append(p)
+        if len(trainable_params) == 0:
+            raise ValueError("TRAIN.TYPE=rl_only requires policy_model/value_model parameters")
+        param_dicts = [{"params": trainable_params}]
+        if is_main_process():
+            print("RL-only learnable parameters are shown below.")
+            for n, p in net.named_parameters():
+                if p.requires_grad:
+                    print(n)
+    elif train_cls:
         print("Only training classification head. Learnable parameters are shown below.")
         param_dicts = [
             {"params": [p for n, p in net.named_parameters() if "cls" in n and p.requires_grad]}

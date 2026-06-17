@@ -182,6 +182,24 @@ class SequenceSampler(torch.utils.data.Dataset):
 
         return template_frame_ids, search_frame_ids
 
+    def _strict_consecutive_sample(self, visible):
+        max_start = len(visible) - self.num_search_frames
+        if max_start <= 0:
+            return None, None
+
+        candidates = []
+        for start in range(1, max_start):
+            template_id = start - 1
+            search_ids = list(range(start, start + self.num_search_frames))
+            if bool(visible[template_id]) and all(bool(visible[i]) for i in search_ids):
+                candidates.append((template_id, search_ids))
+
+        if not candidates:
+            return None, None
+
+        template_id, search_frame_ids = random.choice(candidates)
+        return [template_id], search_frame_ids
+
     def __getitem__(self, index):
         """
         args:
@@ -220,6 +238,10 @@ class SequenceSampler(torch.utils.data.Dataset):
                     template_frame_ids, search_frame_ids = self._random_interval_sample(visible)
                 else:
                     template_frame_ids, search_frame_ids = self._sequential_sample(visible)
+            elif self.frame_sample_mode == 'strict_consecutive':
+                template_frame_ids, search_frame_ids = self._strict_consecutive_sample(visible)
+                if template_frame_ids is None:
+                    return self.__getitem__(index)
             else:
                 raise NotImplementedError
         else:
