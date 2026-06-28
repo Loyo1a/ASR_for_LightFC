@@ -12,8 +12,9 @@ def local_env_settings(env_num):
     settings.itb_path = r''
     settings.lasot_extension_subset_path = ''
     settings.lasot_lmdb_path = r''
-    settings.lasot_path = '' #/media/liyunfeng/CV2/data/sot/lasot
-    settings.network_path = r'E:\LTSiam\LightFC-main\outputs\checkpoints\train\lightfc\tsl\LightFC_ep0400.pth.tar'
+    settings.lasot_path = r'E:\LTSiam\dataset\LaSOT' #/media/liyunfeng/CV2/data/sot/lasot
+    #settings.network_path = r'E:\LTSiam\LightFC-main\outputs\checkpoints\train\lightfc\tsl\LightFC_ep0400.pth.tar'
+    settings.network_path = r'\outputs\checkpoints\train\lightfc\lightfc_asr_warmup_tinyvit\LightFC_ep0300.pth.tar'
     settings.nfs_path = r''
     settings.otb_path = r'D:\Drone\FedTrack-main\datasets\OTB100'
     settings.dtb_path = r'E:\LTSiam\dataset\DTB70'

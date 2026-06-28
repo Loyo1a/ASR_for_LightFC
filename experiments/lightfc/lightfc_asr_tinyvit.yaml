@@ -30,7 +30,7 @@ DATA:
       - GOT10K_vottrain
     DATASETS_RATIO:
       - 1
-    SAMPLE_PER_EPOCH: 8
+    SAMPLE_PER_EPOCH: 7500
   VAL:
     DATASETS_NAME:
       - GOT10K_votval
@@ -69,7 +69,7 @@ MODEL:
 TRAIN:
   TYPE: rl_only
   PRV_CKPT: E:\LTSiam\LightFC-main\checkpoints\train\lightfc\lightfc_asr_warmup_tinyvit\LightFC_ep0300.pth.tar
-  EPOCH: 100
+  EPOCH: 30
   BATCH_SIZE: 8
   NUM_WORKER: 2
   LR: 0.0001

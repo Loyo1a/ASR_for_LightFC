@@ -168,4 +168,39 @@ class AdaptiveSearchCandidateProcessing(BaseProcessing):
                 data["valid"] = False
                 return data
 
-        return data.apply(stack_tensors) if self.mode == "sequence" else data
+        # =========================
+        # SAFE OUTPUT VERSION - fixed
+        # =========================
+
+        if data["template_masks"] is None:
+            data["template_masks"] = torch.zeros(
+                (len(data["template_images"]),
+                 self.output_sz["template"],
+                 self.output_sz["template"])
+            )
+
+        if data["search_masks"] is None:
+            data["search_masks"] = torch.zeros(
+                (len(data["search_images"]),
+                 self.output_sz["search"],
+                 self.output_sz["search"])
+            )
+
+        def keep_for_training(v):
+            if isinstance(v, torch.Tensor):
+                return True
+            if isinstance(v, list) and len(v) > 0 and isinstance(v[0], torch.Tensor):
+                return True
+            if isinstance(v, bool):
+                return True
+            return False
+
+        clean_data = TensorDict({
+            k: v for k, v in data.items()
+            if keep_for_training(v)
+        })
+
+        if self.mode == "sequence":
+            return clean_data.apply(stack_tensors)
+        else:
+            return clean_data.apply(lambda x: x[0] if isinstance(x, list) else x)

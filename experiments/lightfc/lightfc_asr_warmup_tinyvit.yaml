@@ -4,14 +4,16 @@ DATA:
     - 0.485
     - 0.456
     - 0.406
-  SAMPLER_TYPE: strict_consecutive
+  SAMPLER_TYPE: sequence
   SEQUENCE:
-    MODE: strict_consecutive
-    MAX_INTERVAL: 1
+    MODE: sequential
+    MAX_INTERVAL: 10
   SEARCH:
     CENTER_JITTER: 3
     FACTOR: 4.0
     FACTORS: [2.0, 4.0, 6.0, 8.0]
+    FACTOR_PROBS: [0.25, 0.25, 0.25, 0.25]
+    RANDOM_FACTOR_PER_FRAME: true
     SCALE_JITTER: 0.25
     SIZE: 256
     NUMBER: 8
@@ -38,7 +40,7 @@ DATA:
       - 1
     SAMPLE_PER_EPOCH: 8
 MODEL:
-  ASR_ENABLE: true
+  ASR_ENABLE: false
   ASR_HIDDEN_DIM: 32
   BACKBONE:
     TYPE: 'tiny_vit_5m_224'
@@ -67,12 +69,11 @@ MODEL:
       stride: 16
       freeze_bn: False
 TRAIN:
-  TYPE: rl_only
-  PRV_CKPT: E:\LTSiam\LightFC-main\checkpoints\train\lightfc\lightfc_asr_warmup_tinyvit\LightFC_ep0300.pth.tar
-  EPOCH: 100
+  TYPE: normal
+  EPOCH: 300
   BATCH_SIZE: 8
   NUM_WORKER: 2
-  LR: 0.0001
+  LR: 0.001
   SEED: 42
   GIOU_WEIGHT: 2.0
   L1_WEIGHT: 5.0
@@ -81,7 +82,7 @@ TRAIN:
   SCHEDULER:
     TYPE: step
     DECAY_RATE: 0.1
-  LR_DROP_EPOCH: 40
+  LR_DROP_EPOCH: 160
   WEIGHT_DECAY: 0.0001
   MAX_GRAD_NORM: 5.0
   BACKBONE_MULTIPLIER: 0.1
@@ -90,20 +91,15 @@ TRAIN:
   SAVE_INTERVAL: 5
   VAL_EPOCH_INTERVAL: 1
   PRINT_INTERVAL: 50
-  AMP: False
+  AMP: True
   L_LOSS: 'l1'
   BOX_LOSS: 'wiou'
   CLS_LOSS: 'focal'
-  ALPHA_IOU: 1.0
-  BETA_AUC: 1.0
-  ETA_COST: 0.10
-  VALUE_WEIGHT: 0.50
-  ADV_NORM: true
 TEST:
-  EPOCH: 30
+  EPOCH: 300
   SEARCH_FACTOR: 4.0
   SEARCH_SIZE: 256
   TEMPLATE_FACTOR: 2.0
   TEMPLATE_SIZE: 128
   INIT_SEARCH_FACTOR: 4.0
-  ASR_ENABLE: true
+  ASR_ENABLE: false

@@ -64,8 +64,25 @@ def ltr_collate(batch):
         return torch.DoubleTensor(batch)
     elif isinstance(batch[0], string_classes):
         return batch
+
     elif isinstance(batch[0], TensorDict):
-        return TensorDict({key: ltr_collate([d[key] for d in batch]) for key in batch[0]})
+
+        out = {}
+
+        for key in batch[0]:
+            samples = [d[key] for d in batch]
+            sample0 = samples[0]
+
+            # ✅ 只 stack tensor
+            if isinstance(sample0, torch.Tensor):
+                out[key] = ltr_collate_stack1(samples)
+
+            else:
+                # ❗ 非 tensor：直接保留，不参与 stack
+                out[key] = samples
+
+        return TensorDict(out)
+
     elif isinstance(batch[0], collections.Mapping):
         return {key: ltr_collate([d[key] for d in batch]) for key in batch[0]}
     elif isinstance(batch[0], TensorList):
@@ -81,55 +98,106 @@ def ltr_collate(batch):
 
 
 def ltr_collate_stack1(batch):
-    """Puts each data field into a tensor. The tensors are stacked at dim=1 to form the batch"""
+    """Stacks tensors at dim=1 for sequence tracking"""
 
     error_msg = "batch must contain tensors, numbers, dicts or lists; found {}"
     elem_type = type(batch[0])
+
+    # =========================
+    # 1. Tensor case (核心修复)
+    # =========================
     if isinstance(batch[0], torch.Tensor):
+
+        # 🔥 防御：混入非 tensor
+        if not all(isinstance(x, torch.Tensor) for x in batch):
+            #print("\n[COLLATE FIX] tensor/list混合，自动修复")
+
+            batch = [
+                x if isinstance(x, torch.Tensor)
+                else torch.zeros_like(batch[0])
+                for x in batch
+            ]
+
         out = None
+
         if _check_use_shared_memory():
-            # If we're in a background process, concatenate directly into a
-            # shared memory tensor to avoid an extra copy
             numel = sum([x.numel() for x in batch])
             storage = batch[0].storage()._new_shared(numel)
 
             if stack_mode == '1':
                 out = batch[0].new(storage)
                 return torch.stack(batch, 1, out=out)
+
             elif stack_mode == '2':
                 out = batch[0].new(storage).view(-1, *list(batch[0].size()))
                 return torch.stack(batch, 0, out=out)
-        # if batch[0].dim() < 4:
-        #     return torch.stack(batch, 0, out=out)
-        # return torch.cat(batch, 0, out=out)
+
+        return torch.stack(batch, 0, out=out)
+
+    # =========================
+    # 2. numpy
+    # =========================
     elif elem_type.__module__ == 'numpy' and elem_type.__name__ != 'str_' \
             and elem_type.__name__ != 'string_':
+
         elem = batch[0]
+
         if elem_type.__name__ == 'ndarray':
-            # array of string classes and object
             if re.search('[SaUO]', elem.dtype.str) is not None:
                 raise TypeError(error_msg.format(elem.dtype))
-
             return torch.stack([torch.from_numpy(b) for b in batch], 1)
-        if elem.shape == ():  # scalars
+
+        if elem.shape == ():
             py_type = float if elem.dtype.name.startswith('float') else int
-            return torch.utils.data.dataloader.numpy_type_map[elem.dtype.name](list(map(py_type, batch)))
+            return torch.utils.data.dataloader.numpy_type_map[elem.dtype.name](
+                list(map(py_type, batch))
+            )
+
     elif isinstance(batch[0], int_classes):
         return torch.LongTensor(batch)
+
     elif isinstance(batch[0], float):
         return torch.DoubleTensor(batch)
+
     elif isinstance(batch[0], string_classes):
         return batch
+
+    # =========================
+    # 3. TensorDict（关键修复）
+    # =========================
     elif isinstance(batch[0], TensorDict):
-        return TensorDict({key: ltr_collate_stack1([d[key] for d in batch]) for key in batch[0]})
+
+        out = {}
+
+        for key in batch[0]:
+
+            samples = [d[key] for d in batch]
+            sample0 = samples[0]
+
+            # tensor → stack
+            if isinstance(sample0, torch.Tensor):
+                out[key] = ltr_collate_stack1(samples)
+
+            else:
+                # 🔥 非 tensor：统一取第一个（避免 list 扩散）
+                out[key] = sample0
+
+        return TensorDict(out)
+
+    # =========================
+    # 4. Mapping
+    # =========================
     elif isinstance(batch[0], collections.Mapping):
         return {key: ltr_collate_stack1([d[key] for d in batch]) for key in batch[0]}
+
     elif isinstance(batch[0], TensorList):
         transposed = zip(*batch)
         return TensorList([ltr_collate_stack1(samples) for samples in transposed])
+
     elif isinstance(batch[0], collections.Sequence):
         transposed = zip(*batch)
         return [ltr_collate_stack1(samples) for samples in transposed]
+
     elif batch[0] is None:
         return batch
 

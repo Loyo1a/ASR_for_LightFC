@@ -9,10 +9,10 @@ from lib.test.analysis.plot_results import print_results, plot_results
 from lib.test.evaluation import get_dataset, trackerlist
 
 trackers = []
-dataset_name = 'uav' #utb
+dataset_name = 'otb' #utb
 
 
-parameter_name = r'baseline_v1_release_backbone_tinyvit' #mobilnetv2_p_pwcorr_se_scf_sc_iab_sc_adj_concat_repn33_se_conv33_center_wiou
+parameter_name = r'lightfc_asr_tinyvit' #lightfc_asr_warmup_tinyvit #mobilnetv2_p_pwcorr_se_scf_sc_iab_sc_adj_concat_repn33_se_conv33_center_wiou
 trackers.extend(
     trackerlist(name='lightfc', parameter_name=parameter_name, dataset_name=dataset_name,
                 run_ids=None, env_num=env_num, display_name=parameter_name))

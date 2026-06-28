@@ -4,7 +4,7 @@ DATA:
     - 0.485
     - 0.456
     - 0.406
-  SAMPLER_TYPE: sequence
+  SAMPLER_TYPE: random
   SEQUENCE:
     MODE: sequential
     MAX_INTERVAL: 10
@@ -16,7 +16,7 @@ DATA:
     RANDOM_FACTOR_PER_FRAME: true
     SCALE_JITTER: 0.25
     SIZE: 256
-    NUMBER: 8
+    NUMBER: 1
   STD:
     - 0.229
     - 0.224
@@ -32,13 +32,13 @@ DATA:
       - GOT10K_vottrain
     DATASETS_RATIO:
       - 1
-    SAMPLE_PER_EPOCH: 60000
+    SAMPLE_PER_EPOCH: 8
   VAL:
     DATASETS_NAME:
       - GOT10K_votval
     DATASETS_RATIO:
       - 1
-    SAMPLE_PER_EPOCH: 10000
+    SAMPLE_PER_EPOCH: 8
 MODEL:
   ASR_ENABLE: false
   ASR_HIDDEN_DIM: 32
@@ -70,8 +70,8 @@ MODEL:
       freeze_bn: False
 TRAIN:
   TYPE: normal
-  EPOCH: 300
-  BATCH_SIZE: 32
+  EPOCH: 400
+  BATCH_SIZE: 8
   NUM_WORKER: 2
   LR: 0.001
   SEED: 42

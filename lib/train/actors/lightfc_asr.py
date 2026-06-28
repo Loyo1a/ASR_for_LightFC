@@ -1,6 +1,6 @@
 import torch
 from torch.distributions import Categorical
-
+from ...utils.heapmap_utils import generate_heatmap
 from . import BaseActor
 from lib.utils.adaptive_search import (
     action_index_to_factor,
@@ -43,6 +43,14 @@ class LightFCASRActor(BaseActor):
             pred_boxes = pred_boxes.view(1, 4)
         return box_cxcywh_to_xyxy(pred_boxes).view(-1, 4)
 
+    @staticmethod
+    def _metric_to_vector(x):
+        if x.ndim == 0:
+            return x.view(1)
+        if x.ndim == 1:
+            return x
+        return x.view(x.shape[0], -1).mean(dim=1)
+
     def __call__(self, data):
         template = data["template_images"]
         if template.ndim == 5:
@@ -67,6 +75,7 @@ class LightFCASRActor(BaseActor):
         ious = []
         costs = []
         factors_used = []
+        tracking_losses = []
 
         prev_pred_box_xyxy = None
         curr_action_idx = torch.ones((batch_size,), dtype=torch.long, device=search_candidates.device)
@@ -84,8 +93,44 @@ class LightFCASRActor(BaseActor):
             gt_xyxy = box_xywh_to_xyxy(gt_box_t).view(-1, 4).clamp(0.0, 1.0)
 
             _, iou_t = self.objective.iou(pred_xyxy, gt_xyxy)
-            iou_t = iou_t.detach()
+            iou_t = self._metric_to_vector(iou_t.detach())
             ious.append(iou_t)
+
+            # === ADDED ===
+            with torch.no_grad():
+                pred_boxes_vec = box_cxcywh_to_xyxy(out_dict["pred_boxes"]).view(-1, 4)
+                gt_boxes_vec = gt_xyxy.view(-1, 4).clamp(0.0, 1.0)
+
+                try:
+                    iou_loss_t, _ = self.objective.iou(pred_boxes_vec, gt_boxes_vec)
+                except:
+                    iou_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
+
+                l1_loss_t = self.objective.l1(pred_boxes_vec, gt_boxes_vec)
+
+                if "score_map" in out_dict:
+                    # 生成当前帧的 gt heatmap
+                    # 注意：gt_anno 格式可能需要调整，这里假设是当前帧的 [x,y,w,h]
+                    gt_anno_t = gt_anno[:, t] if gt_anno.ndim == 3 else gt_anno
+                    gt_gaussian_maps = generate_heatmap(
+                        gt_anno_t.view(1, batch_size, 4),  # 调整维度以匹配 generate_heatmap
+                        self.cfg.DATA.SEARCH.SIZE,
+                        self.cfg.MODEL.BACKBONE.STRIDE
+                    )
+                    gt_gaussian_maps_flatten = gt_gaussian_maps[-1].unsqueeze(1)
+                    location_loss_t = self.objective.focal_loss(
+                        out_dict["score_map"], gt_gaussian_maps_flatten
+                    )
+                else:
+                    location_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
+
+                tracking_loss_t = (
+                        2 * iou_loss_t +
+                        5 * l1_loss_t +
+                        1 * location_loss_t
+                )
+                tracking_losses.append(tracking_loss_t)
+            # === END ADDED ===
 
             if t > 0:
                 factors_used.append(curr_factor)
@@ -112,6 +157,8 @@ class LightFCASRActor(BaseActor):
             prev_pred_box_xyxy = pred_xyxy.detach()
 
         iou_mat = torch.stack(ious, dim=1)
+        if iou_mat.ndim != 2:
+            iou_mat = iou_mat.view(iou_mat.shape[0], iou_mat.shape[1], -1).mean(dim=2)
         auc_clip = compute_success_auc(iou_mat).detach()
 
         rewards = []
@@ -131,6 +178,9 @@ class LightFCASRActor(BaseActor):
         value_loss = (values - rewards.detach()).square().mean()
         total_loss = policy_loss + self.value_weight * value_loss
 
+        tracking_loss_mean = torch.stack(tracking_losses).mean() if tracking_losses else torch.tensor(0.0)
+
+
         factor_tensor = torch.stack(factors_used, dim=1) if factors_used else curr_factor[:, None]
         cost_tensor = torch.stack(costs, dim=1) if costs else torch.zeros_like(factor_tensor)
         status = {
@@ -142,5 +192,6 @@ class LightFCASRActor(BaseActor):
             "IoU/mean": iou_mat.mean().item(),
             "AUC/clip": auc_clip.mean().item(),
             "Policy/MeanFactor": factor_tensor.float().mean().item(),
+            "Loss/tracking": tracking_loss_mean.item(),
         }
         return total_loss, status

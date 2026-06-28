@@ -58,14 +58,14 @@ def for_test():
         #  'param': 'mobilnetv2_p_pwcorr_se_scf_sc_iab_sc_adj_concat_repn33_se_conv33_center_wiou'
         #  },
         {'name': 'lightfc',
-         'param': 'tsl' #baseline_v1_release_backbone_tinyvit
+         'param': 'lightfc_asr_tinyvi' #lightfc_asr_warmup_tinyvit #'tsl' #baseline_v1_release_backbone_tinyvit
          },
     ]
 
     dataset_list = [
-        #{'name': 'otb'},
+         {'name': 'otb'},
         #{'name': 'uav'},
-        #{'name': 'lasot'},
+       # {'name': 'lasot'},
         # {'name': 'tc128'},
         # {'name': 'utb'},
         # {'name': 'uot'},
@@ -74,7 +74,7 @@ def for_test():
         #{'name': 'dtb'},
         #{'name': 'uavdt'},
         #{'name': 'visdrone2018'},
-        {'name': 'uavtrack'},
+        #{'name': 'uavtrack'},
         #{'name': 'uav20l',}
     ]
 

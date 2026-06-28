@@ -62,7 +62,7 @@ def run(settings):
     loader_train, loader_val = build_dataloaders(cfg, settings)
 
     # Create network
-    if settings.script_name in ("lightfc", "lightfc_asr_warmup", "lightfc_asr"):
+    if settings.script_name in ("lightfc", "lightfc_asr_warmup_tinyvit", "lightfc_asr"):
         net = LightFC(cfg, env_num=settings.env_num, training=True)
 
     else:
@@ -85,7 +85,7 @@ def run(settings):
     settings.distill_loss_type = getattr(cfg.TRAIN, "DISTILL_LOSS_TYPE", "KL")
 
     # Actors
-    if settings.script_name in ("lightfc", "lightfc_asr_warmup"):
+    if settings.script_name in ("lightfc", "lightfc_asr_warmup_tinyvit"):
         objective = lightTrackObjective(cfg)
         loss_weight = {'iou': cfg.TRAIN.GIOU_WEIGHT, 'l1': cfg.TRAIN.L1_WEIGHT, 'focal': cfg.TRAIN.LOC_WEIGHT, }
         actor = lightTrackActor(net=net, objective=objective, loss_weight=loss_weight, settings=settings, cfg=cfg)
