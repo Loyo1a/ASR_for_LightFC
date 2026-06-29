@@ -30,6 +30,28 @@ class LightFCASRActor(BaseActor):
     def net_module(self):
         return self.net.module if hasattr(self.net, "module") else self.net
 
+    def _set_rl_only_train_mode(self):
+        """Keep frozen tracker modules in eval mode during RL-only training."""
+        train_type = getattr(self.cfg.TRAIN, "TYPE", None) if self.cfg is not None else None
+        if train_type != "rl_only":
+            return
+
+        net = self.net_module
+
+        for name in ["backbone", "fusion", "head"]:
+            module = getattr(net, name, None)
+            if module is not None:
+                module.eval()
+                for p in module.parameters():
+                    p.requires_grad_(False)
+
+        for name in ["policy_model", "value_model", "asr_actor_critic"]:
+            module = getattr(net, name, None)
+            if module is not None:
+                module.train()
+                for p in module.parameters():
+                    p.requires_grad_(True)
+
     @staticmethod
     def _select_candidate(candidates, action_idx):
         batch_idx = torch.arange(candidates.shape[0], device=candidates.device)
@@ -52,6 +74,8 @@ class LightFCASRActor(BaseActor):
         return x.view(x.shape[0], -1).mean(dim=1)
 
     def __call__(self, data):
+        self._set_rl_only_train_mode()
+
         template = data["template_images"]
         if template.ndim == 5:
             template = template[:, 0]
@@ -75,7 +99,7 @@ class LightFCASRActor(BaseActor):
         ious = []
         costs = []
         factors_used = []
-        tracking_losses = []
+        #tracking_losses = []
 
         prev_pred_box_xyxy = None
         curr_action_idx = torch.ones((batch_size,), dtype=torch.long, device=search_candidates.device)
@@ -96,41 +120,41 @@ class LightFCASRActor(BaseActor):
             iou_t = self._metric_to_vector(iou_t.detach())
             ious.append(iou_t)
 
-            # === ADDED ===
-            with torch.no_grad():
-                pred_boxes_vec = box_cxcywh_to_xyxy(out_dict["pred_boxes"]).view(-1, 4)
-                gt_boxes_vec = gt_xyxy.view(-1, 4).clamp(0.0, 1.0)
-
-                try:
-                    iou_loss_t, _ = self.objective.iou(pred_boxes_vec, gt_boxes_vec)
-                except:
-                    iou_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
-
-                l1_loss_t = self.objective.l1(pred_boxes_vec, gt_boxes_vec)
-
-                if "score_map" in out_dict:
-                    # 生成当前帧的 gt heatmap
-                    # 注意：gt_anno 格式可能需要调整，这里假设是当前帧的 [x,y,w,h]
-                    gt_anno_t = gt_anno[:, t] if gt_anno.ndim == 3 else gt_anno
-                    gt_gaussian_maps = generate_heatmap(
-                        gt_anno_t.view(1, batch_size, 4),  # 调整维度以匹配 generate_heatmap
-                        self.cfg.DATA.SEARCH.SIZE,
-                        self.cfg.MODEL.BACKBONE.STRIDE
-                    )
-                    gt_gaussian_maps_flatten = gt_gaussian_maps[-1].unsqueeze(1)
-                    location_loss_t = self.objective.focal_loss(
-                        out_dict["score_map"], gt_gaussian_maps_flatten
-                    )
-                else:
-                    location_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
-
-                tracking_loss_t = (
-                        2 * iou_loss_t +
-                        5 * l1_loss_t +
-                        1 * location_loss_t
-                )
-                tracking_losses.append(tracking_loss_t)
-            # === END ADDED ===
+            # # === ADDED ===
+            # with torch.no_grad():
+            #     pred_boxes_vec = box_cxcywh_to_xyxy(out_dict["pred_boxes"]).view(-1, 4)
+            #     gt_boxes_vec = gt_xyxy.view(-1, 4).clamp(0.0, 1.0)
+            #
+            #     try:
+            #         iou_loss_t, _ = self.objective.iou(pred_boxes_vec, gt_boxes_vec)
+            #     except:
+            #         iou_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
+            #
+            #     l1_loss_t = self.objective.l1(pred_boxes_vec, gt_boxes_vec)
+            #
+            #     if "score_map" in out_dict:
+            #         # 生成当前帧的 gt heatmap
+            #         # 注意：gt_anno 格式可能需要调整，这里假设是当前帧的 [x,y,w,h]
+            #         gt_anno_t = gt_anno[:, t] if gt_anno.ndim == 3 else gt_anno
+            #         gt_gaussian_maps = generate_heatmap(
+            #             gt_anno_t.view(1, batch_size, 4),  # 调整维度以匹配 generate_heatmap
+            #             self.cfg.DATA.SEARCH.SIZE,
+            #             self.cfg.MODEL.BACKBONE.STRIDE
+            #         )
+            #         gt_gaussian_maps_flatten = gt_gaussian_maps[-1].unsqueeze(1)
+            #         location_loss_t = self.objective.focal_loss(
+            #             out_dict["score_map"], gt_gaussian_maps_flatten
+            #         )
+            #     else:
+            #         location_loss_t = torch.tensor(0.0, device=pred_boxes_vec.device)
+            #
+            #     tracking_loss_t = (
+            #             2 * iou_loss_t +
+            #             5 * l1_loss_t +
+            #             1 * location_loss_t
+            #     )
+            #     tracking_losses.append(tracking_loss_t)
+            # # === END ADDED ===
 
             if t > 0:
                 factors_used.append(curr_factor)
@@ -178,11 +202,24 @@ class LightFCASRActor(BaseActor):
         value_loss = (values - rewards.detach()).square().mean()
         total_loss = policy_loss + self.value_weight * value_loss
 
-        tracking_loss_mean = torch.stack(tracking_losses).mean() if tracking_losses else torch.tensor(0.0)
+        #tracking_loss_mean = torch.stack(tracking_losses).mean() if tracking_losses else torch.tensor(0.0)
 
 
         factor_tensor = torch.stack(factors_used, dim=1) if factors_used else curr_factor[:, None]
         cost_tensor = torch.stack(costs, dim=1) if costs else torch.zeros_like(factor_tensor)
+        net = self.net_module
+        tracker_training_flag = 0.0
+        for name in ["backbone", "fusion", "head"]:
+            module = getattr(net, name, None)
+            if module is not None and module.training:
+                tracker_training_flag = 1.0
+                break
+
+        policy_training_flag = 0.0
+        policy_module = getattr(net, "policy_model", None)
+        if policy_module is not None and policy_module.training:
+            policy_training_flag = 1.0
+
         status = {
             "Loss/total": total_loss.item(),
             "Loss/policy": policy_loss.item(),
@@ -192,6 +229,8 @@ class LightFCASRActor(BaseActor):
             "IoU/mean": iou_mat.mean().item(),
             "AUC/clip": auc_clip.mean().item(),
             "Policy/MeanFactor": factor_tensor.float().mean().item(),
-            "Loss/tracking": tracking_loss_mean.item(),
+            #"Loss/tracking": tracking_loss_mean.item(),
+            "Mode/tracker_train": tracker_training_flag,
+            "Mode/policy_train": policy_training_flag,
         }
         return total_loss, status
